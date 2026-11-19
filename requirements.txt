@@ -20,5 +20,10 @@ pypdf==6.21.1
 pandas==3.0.6
 openpyxl==3.1.5
 
+# --- API (PB3) ---
+fastapi==0.165.0
+uvicorn==0.54.0
+
 # --- Tests ---
 pytest==9.1.1
+httpx==0.28.1                   # lo usa TestClient de FastAPI
