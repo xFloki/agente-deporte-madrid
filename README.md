@@ -71,6 +71,32 @@ python -m pytest tests/test_api_contrato.py -v
 
 El Streamlit del PB2 sigue en `app_streamlit_pb2.py` como referencia para el front HTTP (bloque C).
 
+## Front (Streamlit, cliente HTTP)
+
+`front/streamlit_app.py` solo habla HTTP con la API (a través de `front/api_cliente.py`): no importa el grafo,
+ni `config.py`, ni nada de `src/`. Lee dos variables del `.env`:
+
+- `API_BASE_URL`: la URL de la API (`http://127.0.0.1:8000` en local; en la demo final, la URL de Render).
+- `API_KEY`: la misma clave que tiene configurada la API.
+
+```bash
+uvicorn app:app --reload                 # terminal 1: la API
+streamlit run front/streamlit_app.py     # terminal 2: el front, en http://localhost:8501
+```
+
+Qué enseña:
+
+- **Servicio:** el estado de `GET /health` (API activa y dónde vive el historial), con un botón para comprobarlo otra vez.
+- **Chat:** cada pregunta es un `POST /ask` con `auto_aprobar=false`.
+- **HITL:** si hay plan, se ve en la barra lateral con **Aprobar** y **Rechazar** (`POST /approve`), y el chat se bloquea hasta decidir.
+- **Historial:** se pide a la API con `GET /threads/{thread_id}/messages` después de cada turno; no es una lista en memoria del front.
+- **`thread_id`** visible, y **Nueva conversación** crea otro.
+- **Errores** de la API (401, 429, 504, servicio dormido…) en un mensaje claro, sin enseñar la clave.
+
+```bash
+python -m pytest tests/test_front.py -v  # con una API falsa: sin red y sin API arrancada
+```
+
 ---
 
 # Del PB2: el agente
