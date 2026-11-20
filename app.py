@@ -1,125 +1,78 @@
-"""Interfaz Streamlit: solo cliente de src/agent.py.
+"""API del agente de Deporte Municipal (PB3).
 
-  streamlit run app.py
+VERSIÓN MÍNIMA del punto de partida: las rutas del contrato ya existen y devuelven respuestas
+de ejemplo con la forma de AskOut, para que el front y el Docker puedan arrancar desde el primer día.
+
+  uvicorn app:app --reload        # http://127.0.0.1:8000/docs
+
+Lo que falta, por bloques (ver README):
+  A · llamar a procesar_turno / aprobar_plan de src/agent.py, api_key (401/503), rate limit (429),
+      timeout (504), CORS y log por petición.
+  B · historial real en PostgreSQL (src/db.py con las mismas firmas).
 """
 
-import streamlit as st
+from contextlib import asynccontextmanager
 
-from config import MAX_ITER, MAX_STEPS, MAX_TURNS
-from src.agent import aprobar_plan, nuevo_thread_id, procesar_turno
+from fastapi import FastAPI, Query
+from fastapi.responses import RedirectResponse
 
-st.set_page_config(page_title="Agente · Deporte municipal", page_icon="🏊", layout="centered")
+from schemas import AskIn, AskOut, ApproveIn, HealthOut, MessageOut
+from src import db
 
-SALUDO = (
-    "Hola. Soy un **agente multiagente** del deporte municipal de Madrid: "
-    "tarifas, abonos, normas, instalaciones y actividades. "
-    "Cuando prepare un plan, podrás aprobarlo o rechazarlo antes de cerrarlo."
+API_KEY_QUERY = Query(None, description="Clave de la API. Obligatoria en /ask, /approve y /threads/…/messages.")
+
+# Hilos con un plan pendiente (solo para que las respuestas de ejemplo sean coherentes).
+_pendientes: dict[str, str] = {}
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    db.ensure_schema()
+    yield
+
+
+app = FastAPI(
+    title="Agente de Deporte Municipal · API",
+    version="0.1.0",
+    description="El agente multiagente del PB2 (LangGraph + RAG) detrás de una API REST. "
+                "/health y /docs son públicos; el resto pide api_key en la query.",
+    lifespan=lifespan,
 )
 
 
-def _reset() -> None:
-    """Conversación nueva: saludo, thread_id nuevo y sin resultado previo."""
-    st.session_state.messages = [{"role": "assistant", "content": SALUDO}]
-    st.session_state.thread_id = nuevo_thread_id()
-    st.session_state.resultado = {}
+@app.get("/", include_in_schema=False)
+def raiz() -> RedirectResponse:
+    return RedirectResponse("/docs")
 
 
-def _texto_respuesta(resultado: dict) -> str:
-    """Respuesta del agente + plan en viñetas (si lo hay)."""
-    texto = resultado.get("respuesta") or "(Sin respuesta)"
-    plan = resultado.get("plan") or []
-    if plan:
-        etiqueta = "Plan (pendiente de aprobación)" if resultado.get("pendiente_hitl") else "Plan"
-        texto += f"\n\n**{etiqueta}:**\n" + "\n".join(f"- {p}" for p in plan)
-    return texto
+@app.get("/health", response_model=HealthOut, tags=["servicio"])
+def health() -> HealthOut:
+    """Pulso del servicio y dónde vive el historial."""
+    return HealthOut(status="ok", storage=db.storage_mode())
 
 
-def _decidir(aprobado: bool) -> None:
-    """HITL: el humano aprueba o rechaza el plan; la respuesta del agente va al chat."""
-    st.session_state.resultado = aprobar_plan(st.session_state.thread_id, aprobado)
-    texto = st.session_state.resultado.get("respuesta") or ("Plan aprobado." if aprobado else "Plan rechazado.")
-    st.session_state.messages.append({"role": "assistant", "content": texto})
+@app.post("/ask", response_model=AskOut, tags=["agente"])
+def ask(body: AskIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
+    """Un turno del agente. (Ejemplo: el bloque A lo conecta a procesar_turno.)"""
+    respuesta = f"(respuesta de ejemplo) Has preguntado: «{body.pregunta}»"
+    plan = ["(ejemplo) Consultar la tarifa en el documento oficial."]
+    if body.auto_aprobar:
+        db.save_turn(body.thread_id, body.pregunta, respuesta)
+        return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=True, pendiente_hitl=False, plan=plan)
+    _pendientes[body.thread_id] = body.pregunta
+    return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=False, pendiente_hitl=True, plan=plan)
 
 
-if "messages" not in st.session_state:
-    _reset()
+@app.post("/approve", response_model=AskOut, tags=["agente"])
+def approve(body: ApproveIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
+    """Aprueba o rechaza el plan pendiente. (Ejemplo: el bloque A lo conecta a aprobar_plan.)"""
+    pregunta = _pendientes.pop(body.thread_id, "")
+    respuesta = "(ejemplo) Plan aprobado." if body.aprobado else "(ejemplo) Plan rechazado."
+    db.save_turn(body.thread_id, pregunta, respuesta)
+    return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=body.aprobado, pendiente_hitl=False)
 
-with st.sidebar:
-    st.caption(f"thread_id: `{st.session_state.thread_id}`")
-    # Límites del agente: los decide Python (config.py), aquí solo se muestran
-    st.caption(f"Límites: `MAX_ITER={MAX_ITER}` · `MAX_STEPS={MAX_STEPS}` · `MAX_TURNS={MAX_TURNS}`")
 
-    resultado = st.session_state.resultado
-    if resultado.get("pendiente_hitl"):
-        st.divider()
-        st.subheader("HITL — aprobar plan")
-        for item in resultado.get("plan") or []:
-            st.markdown(f"- {item}")
-        c1, c2 = st.columns(2)
-        if c1.button("Aprobar", use_container_width=True, type="primary"):
-            _decidir(True)
-            st.rerun()
-        if c2.button("Rechazar", use_container_width=True):
-            _decidir(False)
-            st.rerun()
-
-    st.divider()
-    if st.button("Nueva conversación", use_container_width=True):
-        _reset()
-        st.rerun()
-
-st.title("Asistente de Deporte Municipal")
-st.caption("Supervisor + especialistas + tools (RAG, API, hora, imagen) · MemorySaver · HITL")
-
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
-
-# Con un plan pendiente el agente no acepta mensajes nuevos: se bloquea el chat
-hitl_bloquea = bool(st.session_state.resultado.get("pendiente_hitl"))
-if hitl_bloquea:
-    st.warning("Plan pendiente de aprobación — usa los botones de la barra lateral.")
-
-if prompt := st.chat_input("Tu pregunta sobre deporte municipal...", disabled=hitl_bloquea):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    with st.chat_message("user"):
-        st.markdown(prompt)
-
-    with st.chat_message("assistant"):
-        with st.spinner("Consultando a los especialistas..."):
-            resultado = procesar_turno(prompt, st.session_state.thread_id)
-        st.session_state.resultado = resultado
-        if resultado.get("error"):  # p. ej. límite de turnos: la respuesta guardada sería la del turno anterior
-            st.error(resultado["error"])
-            texto = f"⚠️ {resultado['error']}"
-        else:
-            texto = _texto_respuesta(resultado)
-            st.markdown(texto)
-    st.session_state.messages.append({"role": "assistant", "content": texto})
-
-    # La barra lateral ya se dibujó arriba: rerun para que aparezcan Aprobar / Rechazar
-    if resultado.get("pendiente_hitl"):
-        st.rerun()
-
-with st.expander("Estado / log / tools (debug)"):
-    resultado = st.session_state.resultado
-    st.json(
-        {
-            "thread_id": st.session_state.thread_id,
-            "pendiente_hitl": resultado.get("pendiente_hitl"),
-            "done": resultado.get("done"),
-            "error": resultado.get("error"),
-            "plan": resultado.get("plan"),
-            "log": resultado.get("log"),
-        }
-    )
-    st.markdown("**Traza de tools**")
-    traza = resultado.get("traza_tools") or []
-    if traza:
-        st.dataframe(
-            [{"tool": t["tool"], "status": t["status"], "preview": t["preview"]} for t in traza],
-            hide_index=True,
-            width="stretch",
-        )
-    else:
-        st.caption("Sin llamadas a tools en este turno.")
+@app.get("/threads/{thread_id}/messages", response_model=list[MessageOut], tags=["historial"])
+def messages(thread_id: str, api_key: str | None = API_KEY_QUERY) -> list[MessageOut]:
+    """Historial del hilo, en orden temporal."""
+    return [MessageOut(**m) for m in db.list_messages(thread_id)]

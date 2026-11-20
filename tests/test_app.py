@@ -1,7 +1,7 @@
 """Tests de la app Streamlit: HITL desde la barra lateral (Aprobar / Rechazar) y panel de debug.
 
 Sin red, sin índice y sin Gemini: tools falsas (src/mocks) y grafo sin LLM (fallback en Python).
-Usa AppTest de Streamlit, que ejecuta app.py sin abrir el navegador.
+Usa AppTest de Streamlit, que ejecuta app_streamlit_pb2.py sin abrir el navegador.
 """
 
 from pathlib import Path
@@ -13,7 +13,7 @@ import src.agent as agent
 import src.graph as graph_mod
 from src.mocks import tools_fake
 
-APP = str(Path(__file__).resolve().parents[1] / "app.py")
+APP = str(Path(__file__).resolve().parents[1] / "app_streamlit_pb2.py")
 
 
 @pytest.fixture(autouse=True)
