@@ -18,6 +18,7 @@ from src.models import Conversation, Message
 
 _engine: Engine | None = None
 
+CONNECT_TIMEOUT_SEGUNDOS = 10  # si Postgres no responde en este tiempo, error claro en vez de quedarse colgado
 
 def get_engine() -> Engine:
     """Crea la conexión la primera vez que hace falta (no al importar: así los tests usan otra)."""
@@ -26,7 +27,11 @@ def get_engine() -> Engine:
         if not config.DATABASE_URL:
             raise RuntimeError("Falta DATABASE_URL (PostgreSQL). Copia .env.example a .env y complétala.")
         # pool_pre_ping: comprueba la conexión antes de usarla (Render cierra las que llevan rato sin uso).
-        _engine = create_engine(config.DATABASE_URL, pool_pre_ping=True)
+        _engine = create_engine(
+            config.DATABASE_URL,
+            pool_pre_ping=True,
+            connect_args={"connect_timeout": CONNECT_TIMEOUT_SEGUNDOS},
+        )
     return _engine
 
 
