@@ -5,6 +5,8 @@ Sin red, sin Gemini y sin Postgres: la API mínima devuelve respuestas de ejempl
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy.pool import StaticPool
+from sqlmodel import create_engine
 
 import app as api
 from config import normalizar_database_url
@@ -13,7 +15,10 @@ from src import db
 
 @pytest.fixture
 def client(monkeypatch):
-    monkeypatch.setattr(db, "_mensajes", {})
+    # Base de datos de prueba en memoria (SQLite), nueva en cada test: sin Postgres ni red.
+    # El servicio usa PostgreSQL; los tests contra Postgres real van en tests/test_db_postgres.py.
+    engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
+    monkeypatch.setattr(db, "_engine", engine)
     monkeypatch.setattr(api, "_pendientes", {})
     with TestClient(api.app) as c:
         yield c
