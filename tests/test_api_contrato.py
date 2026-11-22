@@ -1,6 +1,6 @@
-"""Tests del contrato HTTP (punto de partida del PB3): rutas, schemas y historial provisional.
+"""Tests del contrato HTTP del PB3: rutas, schemas e historial.
 
-Sin red, sin Gemini y sin Postgres: la API mínima devuelve respuestas de ejemplo.
+Sin red, sin Gemini y sin Postgres: el agente es falso (siempre propone un plan) y el historial va a SQLite en memoria.
 """
 
 import pytest
@@ -13,6 +13,23 @@ from config import normalizar_database_url
 from src import db
 
 
+def _resultado_falso(thread_id: str, **cambios) -> dict:
+    """Mismo formato que devuelve src/agent.py."""
+    base = {"respuesta": "La entrada cuesta 4,50 €.", "plan": ["Consultar la tarifa oficial."],
+            "pendiente_hitl": True, "done": False, "log": [], "traza_tools": [],
+            "thread_id": thread_id, "error": None}
+    return {**base, **cambios}
+
+
+def _procesar_turno_falso(mensaje: str, thread_id: str) -> dict:
+    return _resultado_falso(thread_id)
+
+
+def _aprobar_plan_falso(thread_id: str, aprobado: bool) -> dict:
+    return _resultado_falso(thread_id, pendiente_hitl=False, done=aprobado,
+                            respuesta="Plan aprobado." if aprobado else "Plan rechazado.")
+
+
 @pytest.fixture
 def client(monkeypatch):
     # Base de datos de prueba en memoria (SQLite), nueva en cada test: sin Postgres ni red.
@@ -20,6 +37,8 @@ def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     monkeypatch.setattr(db, "_engine", engine)
     monkeypatch.setattr(api, "_pendientes", {})
+    monkeypatch.setattr(api, "procesar_turno", _procesar_turno_falso)
+    monkeypatch.setattr(api, "aprobar_plan", _aprobar_plan_falso)
     with TestClient(api.app) as c:
         yield c
 
