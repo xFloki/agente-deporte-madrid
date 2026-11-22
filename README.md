@@ -53,7 +53,7 @@ enseña antes de Aprobar / Rechazar.
 ## Estado del punto de partida
 
 La API ya arranca con todas las rutas, pero **todavía devuelve respuestas de ejemplo**, y el historial vive
-en memoria (`src/db.py` provisional, con las firmas definitivas). Cada bloque completa su parte:
+en PostgreSQL (ver «Historial en PostgreSQL», más abajo). Cada bloque completa su parte:
 
 | Bloque | Qué | Ramas sugeridas |
 |---|---|---|
@@ -70,6 +70,48 @@ python -m pytest tests/test_api_contrato.py -v
 ```
 
 El Streamlit del PB2 sigue en `app_streamlit_pb2.py` como referencia para el front HTTP (bloque C).
+
+## Historial en PostgreSQL
+
+Cada turno cerrado se guarda en PostgreSQL con SQLModel (`src/models.py` y `src/db.py`). Las tablas se crean
+solas al arrancar la API.
+
+| Tabla | Columnas | Contenido |
+|---|---|---|
+| `conversation` | `id` (= `thread_id`), `created_at` | Una fila por conversación |
+| `message` | `id` (autoincremental), `thread_id` → `conversation.id`, `role`, `content`, `created_at` (UTC) | Dos filas por turno: `user` y `assistant` |
+
+- El historial se ordena por `id`: el mensaje del usuario y la respuesta se guardan a la vez y pueden tener el mismo `created_at`.
+- Cada turno se guarda en **una sola transacción**: o se guardan los dos mensajes, o ninguno.
+- Si Postgres no responde, la conexión falla a los 10 s (`connect_timeout`) con un error claro, en vez de quedarse colgada.
+- El estado del grafo (un plan pendiente de aprobar) sigue en memoria (`MemorySaver`): se pierde al reiniciar; el historial no.
+
+### Postgres en local con Docker
+
+Requisito: Docker Desktop abierto (*Engine running*).
+
+```bash
+# La primera vez: crea el contenedor (con un volumen, los datos sobreviven aunque se borre) y la base «deporte»
+docker run --name pg-deporte -e POSTGRES_PASSWORD=postgres -p 5432:5432 -v pg-deporte-data:/var/lib/postgresql/data -d postgres:16
+docker exec -it pg-deporte createdb -U postgres deporte
+
+# Las siguientes veces
+docker start pg-deporte
+```
+
+El `DATABASE_URL` de `.env.example` ya apunta a este contenedor
+(`postgresql://postgres:postgres@localhost:5432/deporte`). `config.py` lo convierte a `postgresql+psycopg://`.
+
+Comprobar:
+
+```bash
+uvicorn app:app --reload        # GET /health → {"status": "ok", "storage": "postgres"}
+docker exec -it pg-deporte psql -U postgres -d deporte -c "SELECT id, thread_id, role FROM message ORDER BY id;"
+python -m pytest -q             # tests/test_db_postgres.py se salta si Postgres no responde en 2 s
+```
+
+> **Windows:** si tras instalar Docker Desktop la terminal no reconoce `docker`, cierra sesión y vuelve a entrar
+> (el instalador por usuario actualiza el `PATH`, pero los programas abiertos no lo ven).
 
 ## Front (Streamlit, cliente HTTP)
 
