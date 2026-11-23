@@ -37,6 +37,7 @@ def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     monkeypatch.setattr(db, "_engine", engine)
     monkeypatch.setattr(api, "_pendientes", {})
+    monkeypatch.setattr(api, "_hilos", set())
     monkeypatch.setattr(api, "procesar_turno", _procesar_turno_falso)
     monkeypatch.setattr(api, "aprobar_plan", _aprobar_plan_falso)
     with TestClient(api.app) as c:
