@@ -133,6 +133,9 @@ Qué enseña:
 - **HITL:** si hay plan, se ve en la barra lateral con **Aprobar** y **Rechazar** (`POST /approve`), y el chat se bloquea hasta decidir.
 - **Historial:** se pide a la API con `GET /threads/{thread_id}/messages` después de cada turno; no es una lista en memoria del front.
 - **`thread_id`** visible, y **Nueva conversación** crea otro.
+- **Recargar historial** vuelve a pedirlo a la API, y **Abrir una conversación** retoma un `thread_id` guardado
+  (por ejemplo después de recargar la página). Así se hace la prueba de vida desde el front: un turno,
+  redeploy o reinicio de la API, y **Recargar historial** enseña que el turno sigue en Postgres.
 - **Errores** de la API (401, 429, 504, servicio dormido…) en un mensaje claro, sin enseñar la clave.
 
 ```bash
