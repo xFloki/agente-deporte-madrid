@@ -1,4 +1,4 @@
-"""API del agente de Deporte Municipal (PB3).
+"""API del agente de Deporte Municipal.
 
   /ask     → procesar_turno (y aprobar_plan si auto_aprobar) → historial en PostgreSQL (src/db.py)
   /approve → aprobar_plan → historial
@@ -45,7 +45,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Agente de Deporte Municipal · API",
     version="0.1.0",
-    description="El agente multiagente del PB2 (LangGraph + RAG) detrás de una API REST. "
+    description="El agente multiagente (LangGraph + RAG) detrás de una API REST. "
                 "/health y /docs son públicos; el resto pide api_key en la query.",
     lifespan=lifespan,
 )
