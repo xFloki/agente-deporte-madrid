@@ -38,8 +38,10 @@ enseña antes de Aprobar / Rechazar.
 
 - **`auto_aprobar=true`:** si el grafo pide aprobación, la API aprueba sola y el turno queda cerrado (cómodo en Swagger).
 - **`auto_aprobar=false`:** vuelve `pendiente_hitl=true` y se decide con `POST /approve`.
-- **Historial:** solo se guardan los turnos cerrados (`user` + `assistant`). El checkpoint del grafo sigue en
-  `MemorySaver`: un reinicio pierde un HITL a medias, pero no el historial.
+- **Historial:** se guardan los turnos cerrados (`user` + `assistant`). Un turno está cerrado cuando no queda
+  pendiente de aprobación: aprobado, rechazado o sin plan. No hay que confundirlo con `done`, que solo es `true`
+  al aprobar. Si el turno queda pendiente, se guarda cuando se decide con `POST /approve`. El checkpoint del grafo
+  sigue en `MemorySaver`: un reinicio pierde un HITL a medias, pero no el historial.
 
 | Código | Cuándo |
 |---|---|
@@ -133,6 +135,9 @@ Qué enseña:
 - **HITL:** si hay plan, se ve en la barra lateral con **Aprobar** y **Rechazar** (`POST /approve`), y el chat se bloquea hasta decidir.
 - **Historial:** se pide a la API con `GET /threads/{thread_id}/messages` después de cada turno; no es una lista en memoria del front.
 - **`thread_id`** visible, y **Nueva conversación** crea otro.
+- **Recargar historial** vuelve a pedirlo a la API, y **Abrir una conversación** retoma un `thread_id` guardado
+  (por ejemplo después de recargar la página). Así se hace la prueba de vida desde el front: un turno,
+  redeploy o reinicio de la API, y **Recargar historial** enseña que el turno sigue en Postgres.
 - **Errores** de la API (401, 429, 504, servicio dormido…) en un mensaje claro, sin enseñar la clave.
 
 ```bash

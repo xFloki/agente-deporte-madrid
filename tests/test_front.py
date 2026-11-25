@@ -111,6 +111,35 @@ def test_nueva_conversacion_cambia_el_thread_id(api_falsa):
     assert at.session_state["pendiente"] is None and at.session_state["historial"] == []
 
 
+def test_recargar_historial_vuelve_a_pedirlo_a_la_api(api_falsa):
+    at = AppTest.from_file(APP, default_timeout=30).run()
+    thread_id = at.session_state["thread_id"]
+    # Otro proceso guarda un turno en este hilo (como si viniera de antes de un redeploy)
+    api_falsa.historial[thread_id] = [
+        {"role": "user", "content": "Hola", "created_at": "2026-11-23T14:30:37Z"},
+        {"role": "assistant", "content": "Respuesta guardada", "created_at": "2026-11-23T14:30:37Z"},
+    ]
+
+    at.sidebar.button[_botones(at).index("Recargar historial")].click().run()
+
+    assert [m["content"] for m in at.session_state["historial"]] == ["Hola", "Respuesta guardada"]
+    assert api_falsa.llamadas[-1] == "messages"
+
+
+def test_abrir_una_conversacion_existente(api_falsa):
+    api_falsa.historial["prueba-davide-1"] = [
+        {"role": "user", "content": "¿Precio piscina?", "created_at": "2026-11-23T14:30:37Z"},
+        {"role": "assistant", "content": "4,5 €", "created_at": "2026-11-23T14:30:37Z"},
+    ]
+    at = AppTest.from_file(APP, default_timeout=30).run()
+
+    at.sidebar.text_input(key="abrir_thread_id").set_value("prueba-davide-1").run()
+    at.sidebar.button[_botones(at).index("Abrir")].click().run()
+
+    assert at.session_state["thread_id"] == "prueba-davide-1"
+    assert [m["content"] for m in at.session_state["historial"]] == ["¿Precio piscina?", "4,5 €"]
+
+
 def test_error_de_la_api_se_ve_en_pantalla(api_falsa, monkeypatch):
     import api_cliente
 

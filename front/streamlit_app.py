@@ -42,6 +42,13 @@ def _reset() -> None:
     st.session_state.error = None
 
 
+def _abrir(thread_id: str) -> None:
+    """Retoma una conversación ya guardada (por ejemplo, después de recargar la página o un redeploy)."""
+    _reset()
+    st.session_state.thread_id = thread_id
+    _recargar_historial()
+
+
 def _texto(respuesta: str, plan: list[str], pendiente: bool) -> str:
     """Respuesta del agente + plan en viñetas (si lo hay)."""
     texto = respuesta or "(Sin respuesta)"
@@ -96,6 +103,16 @@ with st.sidebar:
 
     st.divider()
     st.caption(f"thread_id: `{st.session_state.thread_id}`")
+    if st.button("Recargar historial", use_container_width=True,
+                 help="Vuelve a pedir el historial a la API (sale de PostgreSQL)."):
+        st.session_state.error = None
+        _recargar_historial()
+        st.rerun()
+    with st.expander("Abrir una conversación"):
+        otro = st.text_input("thread_id", key="abrir_thread_id", placeholder="p. ej. prueba-davide-1")
+        if st.button("Abrir", use_container_width=True) and otro.strip():
+            _abrir(otro.strip())
+            st.rerun()
 
     pendiente = st.session_state.pendiente
     if pendiente:

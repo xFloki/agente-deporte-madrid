@@ -1,28 +1,39 @@
-"""API del agente de Deporte Municipal (PB3).
+"""API del agente de Deporte Municipal.
 
-VERSIÓN MÍNIMA del punto de partida: las rutas del contrato ya existen y devuelven respuestas
-de ejemplo con la forma de AskOut, para que el front y el Docker puedan arrancar desde el primer día.
+  /ask     → procesar_turno (y aprobar_plan si auto_aprobar) → historial en PostgreSQL (src/db.py)
+  /approve → aprobar_plan → historial
 
   uvicorn app:app --reload        # http://127.0.0.1:8000/docs
-
-Lo que falta, por bloques (ver README):
-  A · llamar a procesar_turno / aprobar_plan de src/agent.py, api_key (401/503), rate limit (429),
-      timeout (504), CORS y log por petición.
-  B · historial real en PostgreSQL (src/db.py con las mismas firmas).
 """
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
 from schemas import AskIn, AskOut, ApproveIn, HealthOut, MessageOut
 from src import db
+from src.agent import aprobar_plan, procesar_turno
 
 API_KEY_QUERY = Query(None, description="Clave de la API. Obligatoria en /ask, /approve y /threads/…/messages.")
 
-# Hilos con un plan pendiente (solo para que las respuestas de ejemplo sean coherentes).
+# Pregunta de cada hilo con un plan pendiente: el turno se guarda cuando se decide en /approve.
 _pendientes: dict[str, str] = {}
+# Hilos que han pasado por /ask desde que arrancó el proceso. Tras un reinicio se vacía, igual que el MemorySaver
+# del grafo: por eso /approve responde 404 (la API ya no tiene esa conversación) en vez de 400.
+_hilos: set[str] = set()
+
+
+def _a_ask_out(resultado: dict) -> AskOut:
+    """Del dict que devuelve src/agent.py al contrato AskOut."""
+    return AskOut(
+        respuesta=resultado["respuesta"],
+        thread_id=resultado["thread_id"],
+        done=resultado["done"],
+        pendiente_hitl=resultado["pendiente_hitl"],
+        plan=resultado["plan"],
+        error=resultado["error"],
+    )
 
 
 @asynccontextmanager
@@ -34,7 +45,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="Agente de Deporte Municipal · API",
     version="0.1.0",
-    description="El agente multiagente del PB2 (LangGraph + RAG) detrás de una API REST. "
+    description="El agente multiagente (LangGraph + RAG) detrás de una API REST. "
                 "/health y /docs son públicos; el resto pide api_key en la query.",
     lifespan=lifespan,
 )
@@ -53,23 +64,34 @@ def health() -> HealthOut:
 
 @app.post("/ask", response_model=AskOut, tags=["agente"])
 def ask(body: AskIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
-    """Un turno del agente. (Ejemplo: el bloque A lo conecta a procesar_turno.)"""
-    respuesta = f"(respuesta de ejemplo) Has preguntado: «{body.pregunta}»"
-    plan = ["(ejemplo) Consultar la tarifa en el documento oficial."]
-    if body.auto_aprobar:
-        db.save_turn(body.thread_id, body.pregunta, respuesta)
-        return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=True, pendiente_hitl=False, plan=plan)
-    _pendientes[body.thread_id] = body.pregunta
-    return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=False, pendiente_hitl=True, plan=plan)
+    """Un turno del agente. Con auto_aprobar=true, si queda un plan pendiente la API lo aprueba sola."""
+    _hilos.add(body.thread_id)
+    resultado = procesar_turno(body.pregunta, body.thread_id)
+    if body.auto_aprobar and resultado["pendiente_hitl"]:
+        resultado = aprobar_plan(body.thread_id, True)
+
+    if resultado["error"]:  # el agente no ha completado el turno (plan pendiente, límite de turnos…): no se guarda
+        return _a_ask_out(resultado)
+    if resultado["pendiente_hitl"]:
+        _pendientes[body.thread_id] = body.pregunta
+    else:  # turno cerrado: aprobado o sin plan
+        db.save_turn(body.thread_id, body.pregunta, resultado["respuesta"])
+    return _a_ask_out(resultado)
 
 
 @app.post("/approve", response_model=AskOut, tags=["agente"])
 def approve(body: ApproveIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
-    """Aprueba o rechaza el plan pendiente. (Ejemplo: el bloque A lo conecta a aprobar_plan.)"""
-    pregunta = _pendientes.pop(body.thread_id, "")
-    respuesta = "(ejemplo) Plan aprobado." if body.aprobado else "(ejemplo) Plan rechazado."
-    db.save_turn(body.thread_id, pregunta, respuesta)
-    return AskOut(respuesta=respuesta, thread_id=body.thread_id, done=body.aprobado, pendiente_hitl=False)
+    """Aprueba o rechaza el plan pendiente de un hilo; el turno queda cerrado y se guarda."""
+    if body.thread_id not in _hilos:
+        raise HTTPException(status_code=404, detail="No hay sesión para ese thread_id. Haz antes un POST /ask.")
+    if body.thread_id not in _pendientes:
+        raise HTTPException(status_code=400, detail="No hay plan pendiente de aprobación en este hilo.")
+
+    resultado = aprobar_plan(body.thread_id, body.aprobado)
+    if resultado["error"]:  # no se ha podido aplicar: el plan sigue pendiente y no se guarda nada
+        return _a_ask_out(resultado)
+    db.save_turn(body.thread_id, _pendientes.pop(body.thread_id), resultado["respuesta"])
+    return _a_ask_out(resultado)
 
 
 @app.get("/threads/{thread_id}/messages", response_model=list[MessageOut], tags=["historial"])
