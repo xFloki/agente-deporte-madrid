@@ -8,14 +8,13 @@
 
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.responses import RedirectResponse
 
 from schemas import AskIn, AskOut, ApproveIn, HealthOut, MessageOut
+from security import require_api_key
 from src import db
 from src.agent import aprobar_plan, procesar_turno
-
-API_KEY_QUERY = Query(None, description="Clave de la API. Obligatoria en /ask, /approve y /threads/…/messages.")
 
 # Pregunta de cada hilo con un plan pendiente: el turno se guarda cuando se decide en /approve.
 _pendientes: dict[str, str] = {}
@@ -62,8 +61,8 @@ def health() -> HealthOut:
     return HealthOut(status="ok", storage=db.storage_mode())
 
 
-@app.post("/ask", response_model=AskOut, tags=["agente"])
-def ask(body: AskIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
+@app.post("/ask", response_model=AskOut, tags=["agente"], dependencies=[Depends(require_api_key)])
+def ask(body: AskIn) -> AskOut:
     """Un turno del agente. Con auto_aprobar=true, si queda un plan pendiente la API lo aprueba sola."""
     _hilos.add(body.thread_id)
     resultado = procesar_turno(body.pregunta, body.thread_id)
@@ -79,8 +78,8 @@ def ask(body: AskIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
     return _a_ask_out(resultado)
 
 
-@app.post("/approve", response_model=AskOut, tags=["agente"])
-def approve(body: ApproveIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
+@app.post("/approve", response_model=AskOut, tags=["agente"], dependencies=[Depends(require_api_key)])
+def approve(body: ApproveIn) -> AskOut:
     """Aprueba o rechaza el plan pendiente de un hilo; el turno queda cerrado y se guarda."""
     if body.thread_id not in _hilos:
         raise HTTPException(status_code=404, detail="No hay sesión para ese thread_id. Haz antes un POST /ask.")
@@ -94,7 +93,8 @@ def approve(body: ApproveIn, api_key: str | None = API_KEY_QUERY) -> AskOut:
     return _a_ask_out(resultado)
 
 
-@app.get("/threads/{thread_id}/messages", response_model=list[MessageOut], tags=["historial"])
-def messages(thread_id: str, api_key: str | None = API_KEY_QUERY) -> list[MessageOut]:
+@app.get("/threads/{thread_id}/messages", response_model=list[MessageOut], tags=["historial"],
+         dependencies=[Depends(require_api_key)])
+def messages(thread_id: str) -> list[MessageOut]:
     """Historial del hilo, en orden temporal."""
     return [MessageOut(**m) for m in db.list_messages(thread_id)]

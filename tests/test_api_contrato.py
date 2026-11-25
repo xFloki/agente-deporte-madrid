@@ -9,6 +9,7 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import create_engine
 
 import app as api
+import config
 from config import normalizar_database_url
 from src import db
 
@@ -30,6 +31,9 @@ def _aprobar_plan_falso(thread_id: str, aprobado: bool) -> dict:
                             respuesta="Plan aprobado." if aprobado else "Plan rechazado.")
 
 
+CLAVE = "clave-de-test"
+
+
 @pytest.fixture
 def client(monkeypatch):
     # Base de datos de prueba en memoria (SQLite), nueva en cada test: sin Postgres ni red.
@@ -40,7 +44,9 @@ def client(monkeypatch):
     monkeypatch.setattr(api, "_hilos", set())
     monkeypatch.setattr(api, "procesar_turno", _procesar_turno_falso)
     monkeypatch.setattr(api, "aprobar_plan", _aprobar_plan_falso)
+    monkeypatch.setattr(config, "API_KEY", CLAVE)
     with TestClient(api.app) as c:
+        c.params = {"api_key": CLAVE}
         yield c
 
 
@@ -122,6 +128,25 @@ def test_approve_sin_plan_pendiente_400(client):
     r = client.post("/approve", json={"thread_id": "t6", "aprobado": True})
     assert r.status_code == 400
     assert len(client.get("/threads/t6/messages").json()) == 2
+
+
+def test_sin_clave_o_clave_incorrecta_401(client):
+    with TestClient(api.app) as sin_clave:
+        assert sin_clave.post("/ask", json={"pregunta": "Hola", "thread_id": "t8"}).status_code == 401
+        assert sin_clave.post("/approve", json={"thread_id": "t8", "aprobado": True}).status_code == 401
+        assert sin_clave.get("/threads/t8/messages").status_code == 401
+    assert client.get("/threads/t8/messages", params={"api_key": "otra"}).status_code == 401
+
+
+def test_servidor_sin_api_key_503(client, monkeypatch):
+    monkeypatch.setattr(config, "API_KEY", "")
+    assert client.get("/threads/t9/messages").status_code == 503
+
+
+def test_health_y_docs_sin_clave(client):
+    with TestClient(api.app) as sin_clave:
+        assert sin_clave.get("/health").status_code == 200
+        assert sin_clave.get("/docs").status_code == 200
 
 
 def test_body_invalido_422(client):
