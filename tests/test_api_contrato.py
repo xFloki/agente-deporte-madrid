@@ -1,6 +1,6 @@
-"""Tests del contrato HTTP (punto de partida del PB3): rutas, schemas y historial provisional.
+"""Tests del contrato HTTP del PB3: rutas, schemas e historial.
 
-Sin red, sin Gemini y sin Postgres: la API mínima devuelve respuestas de ejemplo.
+Sin red, sin Gemini y sin Postgres: el agente es falso (siempre propone un plan) y el historial va a SQLite en memoria.
 """
 
 import pytest
@@ -13,6 +13,23 @@ from config import normalizar_database_url
 from src import db
 
 
+def _resultado_falso(thread_id: str, **cambios) -> dict:
+    """Mismo formato que devuelve src/agent.py."""
+    base = {"respuesta": "La entrada cuesta 4,50 €.", "plan": ["Consultar la tarifa oficial."],
+            "pendiente_hitl": True, "done": False, "log": [], "traza_tools": [],
+            "thread_id": thread_id, "error": None}
+    return {**base, **cambios}
+
+
+def _procesar_turno_falso(mensaje: str, thread_id: str) -> dict:
+    return _resultado_falso(thread_id)
+
+
+def _aprobar_plan_falso(thread_id: str, aprobado: bool) -> dict:
+    return _resultado_falso(thread_id, pendiente_hitl=False, done=aprobado,
+                            respuesta="Plan aprobado." if aprobado else "Plan rechazado.")
+
+
 @pytest.fixture
 def client(monkeypatch):
     # Base de datos de prueba en memoria (SQLite), nueva en cada test: sin Postgres ni red.
@@ -20,6 +37,9 @@ def client(monkeypatch):
     engine = create_engine("sqlite://", connect_args={"check_same_thread": False}, poolclass=StaticPool)
     monkeypatch.setattr(db, "_engine", engine)
     monkeypatch.setattr(api, "_pendientes", {})
+    monkeypatch.setattr(api, "_hilos", set())
+    monkeypatch.setattr(api, "procesar_turno", _procesar_turno_falso)
+    monkeypatch.setattr(api, "aprobar_plan", _aprobar_plan_falso)
     with TestClient(api.app) as c:
         yield c
 
@@ -53,17 +73,60 @@ def test_ask_auto_aprobar_cierra_y_guarda(client):
     assert [m["role"] for m in msgs] == ["user", "assistant"]
 
 
-def test_ask_sin_auto_aprobar_queda_pendiente_y_approve_decide(client):
+def test_ask_pendiente_no_se_guarda_hasta_approve(client):
     r = client.post("/ask", json={"pregunta": "¿Precio piscina?", "thread_id": "t2", "auto_aprobar": False})
     assert r.json()["pendiente_hitl"] and not r.json()["done"]
-    r = client.post("/approve", json={"thread_id": "t2", "aprobado": False})
+    assert client.get("/threads/t2/messages").json() == []
+
+    r = client.post("/approve", json={"thread_id": "t2", "aprobado": True})
     assert r.status_code == 200
-    assert not r.json()["pendiente_hitl"] and not r.json()["done"]
+    assert r.json()["done"] and not r.json()["pendiente_hitl"]
+    msgs = client.get("/threads/t2/messages").json()
+    assert [(m["role"], m["content"]) for m in msgs] == [("user", "¿Precio piscina?"), ("assistant", "Plan aprobado.")]
+
+
+def test_approve_rechazar_cierra_y_guarda(client):
+    client.post("/ask", json={"pregunta": "¿Precio piscina?", "thread_id": "t3", "auto_aprobar": False})
+    r = client.post("/approve", json={"thread_id": "t3", "aprobado": False})
+    assert r.status_code == 200
+    assert not r.json()["done"] and not r.json()["pendiente_hitl"]
+    assert client.get("/threads/t3/messages").json()[-1]["content"] == "Plan rechazado."
+
+
+def test_ask_sin_plan_se_guarda(client, monkeypatch):
+    sin_plan = lambda mensaje, thread_id: _resultado_falso(
+        thread_id, respuesta="No tengo información sobre eso.", plan=[], pendiente_hitl=False)
+    monkeypatch.setattr(api, "procesar_turno", sin_plan)
+    r = client.post("/ask", json={"pregunta": "¿Torneo de ajedrez?", "thread_id": "t4"})
+    assert not r.json()["done"] and not r.json()["pendiente_hitl"]
+    assert [m["role"] for m in client.get("/threads/t4/messages").json()] == ["user", "assistant"]
+
+
+def test_ask_con_error_no_se_guarda(client, monkeypatch):
+    con_error = lambda mensaje, thread_id: _resultado_falso(
+        thread_id, respuesta="", pendiente_hitl=False, error="Límite de turnos alcanzado.")
+    monkeypatch.setattr(api, "procesar_turno", con_error)
+    r = client.post("/ask", json={"pregunta": "¿Precio piscina?", "thread_id": "t5"})
+    assert r.status_code == 200
+    assert r.json()["error"] == "Límite de turnos alcanzado."
+    assert client.get("/threads/t5/messages").json() == []
+
+
+def test_approve_sin_sesion_404(client):
+    r = client.post("/approve", json={"thread_id": "nunca-visto", "aprobado": True})
+    assert r.status_code == 404
+
+
+def test_approve_sin_plan_pendiente_400(client):
+    client.post("/ask", json={"pregunta": "¿Precio piscina?", "thread_id": "t6"})
+    r = client.post("/approve", json={"thread_id": "t6", "aprobado": True})
+    assert r.status_code == 400
+    assert len(client.get("/threads/t6/messages").json()) == 2
 
 
 def test_body_invalido_422(client):
-    assert client.post("/ask", json={"thread_id": "t3"}).status_code == 422
-    assert client.post("/approve", json={"thread_id": "t3"}).status_code == 422
+    assert client.post("/ask", json={"thread_id": "t7"}).status_code == 422
+    assert client.post("/approve", json={"thread_id": "t7"}).status_code == 422
 
 
 def test_dos_hilos_no_se_mezclan(client):

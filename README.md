@@ -38,8 +38,10 @@ enseña antes de Aprobar / Rechazar.
 
 - **`auto_aprobar=true`:** si el grafo pide aprobación, la API aprueba sola y el turno queda cerrado (cómodo en Swagger).
 - **`auto_aprobar=false`:** vuelve `pendiente_hitl=true` y se decide con `POST /approve`.
-- **Historial:** solo se guardan los turnos cerrados (`user` + `assistant`). El checkpoint del grafo sigue en
-  `MemorySaver`: un reinicio pierde un HITL a medias, pero no el historial.
+- **Historial:** se guardan los turnos cerrados (`user` + `assistant`). Un turno está cerrado cuando no queda
+  pendiente de aprobación: aprobado, rechazado o sin plan. No hay que confundirlo con `done`, que solo es `true`
+  al aprobar. Si el turno queda pendiente, se guarda cuando se decide con `POST /approve`. El checkpoint del grafo
+  sigue en `MemorySaver`: un reinicio pierde un HITL a medias, pero no el historial.
 
 | Código | Cuándo |
 |---|---|
