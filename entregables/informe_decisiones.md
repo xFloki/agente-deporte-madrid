@@ -151,4 +151,13 @@ _Pendiente._
 
 ## 7. Tres fallos y qué haríamos después
 
-_Pendiente._
+1. **El plan aprobado se pierde en cada redeploy** (María). Al aprobar un plan, el agente lo escribe en
+   `salidas/plan_….md`, en el disco del contenedor. Ese disco es temporal: lo comprobamos en local (el archivo
+   se crea dentro del contenedor y desaparece al pararlo) y en Render se borra en cada despliegue. El historial
+   de la conversación no se pierde porque va a Postgres; el archivo del plan, sí.
+   **Qué haríamos:** guardar el plan aprobado en Postgres, en una tabla `Plan` (`thread_id`, pasos y fecha),
+   igual que el historial. Lo señaló Davide en la revisión de la PR #7.
+
+2. _Pendiente._
+
+3. _Pendiente._
