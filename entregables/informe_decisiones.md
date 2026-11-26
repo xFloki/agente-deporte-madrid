@@ -124,11 +124,22 @@ borrar el servicio; cambiar el plan del espacio de trabajo no basta.
 
 <!-- Un test que no llama al LLM y un docker build. -->
 
-_Pendiente._
+1. **Tests que no llaman al LLM:** `python -m pytest -q` (82 tests). El agente y la API se sustituyen por
+   versiones falsas, así que no hace falta clave ni red. Los tests contra Postgres real se saltan si no hay
+   Postgres. GitHub Actions ya los ejecuta en cada push y en cada PR (`.github/workflows/tests.yml`), y una
+   PR no se mergea sin ellos en verde.
+2. **Un `docker build`:** comprueba que la imagen se construye (dependencias, torch e índice del RAG) antes de
+   que lo intente Render. Tarda unos 10 minutos la primera vez o si cambia la imagen base `python:3.12-slim`;
+   con caché y cambios solo de código, segundos. Después, un `docker run` y `GET /health` →
+   `"storage": "postgres"`. Este paso no está en el CI; añadirlo como job sería el siguiente paso.
 
 ### Dónde están los secretos
 
-_Pendiente._
+- **En local:** en el `.env`, que está en `.gitignore` (no se sube) y en `.dockerignore` (no entra en la imagen).
+  El contenedor los recibe al arrancar con `--env-file .env`. En el repo solo está `.env.example`, sin valores reales.
+- **En Render:** en las variables de entorno del panel del servicio (`DATABASE_URL`, `GOOGLE_API_KEY`, `API_KEY`…).
+- **Fuera de los logs:** uvicorn arranca con `--no-access-log` porque la `api_key` va en la URL (`?api_key=…`) y
+  el log de accesos la escribiría. Los logs propios de la API no incluyen claves ni la `DATABASE_URL`.
 
 ### Cómo desplegamos y qué es un rollback
 
