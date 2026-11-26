@@ -3,6 +3,8 @@
 Sin red, sin Gemini y sin Postgres: el agente es falso (siempre propone un plan) y el historial va a SQLite en memoria.
 """
 
+from collections import defaultdict, deque
+
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
@@ -10,6 +12,7 @@ from sqlmodel import create_engine
 
 import app as api
 import config
+import rate_limit
 from config import normalizar_database_url
 from src import db
 
@@ -45,6 +48,7 @@ def client(monkeypatch):
     monkeypatch.setattr(api, "procesar_turno", _procesar_turno_falso)
     monkeypatch.setattr(api, "aprobar_plan", _aprobar_plan_falso)
     monkeypatch.setattr(config, "API_KEY", CLAVE)
+    monkeypatch.setattr(rate_limit, "_peticiones", defaultdict(deque))
     with TestClient(api.app) as c:
         c.params = {"api_key": CLAVE}
         yield c
@@ -141,6 +145,18 @@ def test_sin_clave_o_clave_incorrecta_401(client):
 def test_servidor_sin_api_key_503(client, monkeypatch):
     monkeypatch.setattr(config, "API_KEY", "")
     assert client.get("/threads/t9/messages").status_code == 503
+
+
+def test_rate_limit_429(client, monkeypatch):
+    monkeypatch.setattr(config, "RATE_LIMIT_PER_MINUTE", 3)
+    codigos = [client.get("/threads/t10/messages").status_code for _ in range(4)]
+    assert codigos == [200, 200, 200, 429]
+
+
+def test_rate_limit_no_cuenta_peticiones_sin_clave(client, monkeypatch):
+    monkeypatch.setattr(config, "RATE_LIMIT_PER_MINUTE", 1)
+    assert client.get("/threads/t11/messages", params={"api_key": "otra"}).status_code == 401
+    assert client.get("/threads/t11/messages").status_code == 200
 
 
 def test_health_y_docs_sin_clave(client):
