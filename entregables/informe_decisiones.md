@@ -75,7 +75,25 @@ _Pendiente._
 
 ### Un límite que hemos notado de verdad
 
-_Pendiente._
+**La memoria RAM del plan gratuito de Render (512 MB).** Nuestro RAG calcula los embeddings con un modelo
+local (`paraphrase-multilingual-MiniLM-L12-v2`, con torch). Lo medimos dentro de la imagen Docker:
+
+| Medida | Memoria |
+|---|---|
+| API + agente + Chroma, sin el modelo del RAG | 158 MB |
+| + importar torch y sentence-transformers | 583 MB |
+| + cargar el modelo y hacer una búsqueda | unos 1000 MB (pico) |
+| Con 512 MB y sin swap (`--memory=512m --memory-swap=512m`, como el plan gratuito) | El contenedor muere al cargar el modelo (exit 137, falta de memoria) |
+| Con 2 GB (plan Standard) y un `/ask` real del agente | 880 MiB (43 %) |
+
+Con solo `--memory=512m` la prueba engaña: Docker permite otro tanto de swap (disco usado como memoria) y el
+proceso sobrevive. Render no tiene swap, así que hay que medir con `--memory-swap` igual a `--memory`.
+
+**Efecto en la demo:** con el plan gratuito, el servicio se caería en la primera pregunta que usara el RAG.
+Planteamos tres salidas en el issue #4: subir al plan Standard (2 GB), calcular los embeddings con la API de
+Gemini (lo probamos: la cuota gratuita cuenta por texto, 1.000 al día, y no da para indexar los 1.714 chunks
+en un día) o pasar a una búsqueda por palabras clave (perdería la búsqueda semántica del PB1). Elegimos el plan
+Standard. En clase no aparecía este límite porque el RAG de la Live Review era léxico, sin modelo.
 
 ### Escalado
 
@@ -87,7 +105,18 @@ _Pendiente._
 
 <!-- Orden de magnitud: web + Postgres en Render, y tokens de un /ask. -->
 
-_Pendiente._
+**Infraestructura (Render):**
+
+| Pieza | Plan | Coste |
+|---|---|---|
+| Web Service (API + agente + RAG) | Standard: 1 CPU, 2 GB | 25 $/mes, prorrateado por segundos |
+| PostgreSQL | Gratuito: 256 MB | 0 $ (caduca a los 30 días; suficiente para la entrega y la presentación) |
+
+Desde el despliegue hasta la presentación son unos 10 días: **del orden de 8–9 $**, repartidos entre los tres.
+Después de la presentación el servicio vuelve al plan gratuito. Para dejar de pagar hay que bajar la máquina o
+borrar el servicio; cambiar el plan del espacio de trabajo no basta.
+
+**Tokens de un `/ask`:** _pendiente_
 
 ## 6. Conclusiones de CI/CD
 
