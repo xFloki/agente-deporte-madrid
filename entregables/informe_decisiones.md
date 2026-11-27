@@ -97,7 +97,7 @@ Cómo repetirla:
 2. En Render, **Manual Deploy → Restart service** (o un redeploy).
 3. En el front, **Recargar historial**, o, tras recargar la página, **Abrir una conversación** con ese `thread_id`. Sin front vale lo mismo con `GET /threads/{thread_id}/messages?api_key=…` en Swagger.
 
-_Se repetirá con el agente real tras el despliegue final desde `main`, y se actualizarán horas y capturas._
+_Esta prueba se hizo con la API mínima del punto de partida (respuestas «(ejemplo)», sin cargar el RAG) y el servicio en el **plan gratuito**, que es lo que se ve en las capturas. Lo que demuestra es que el historial vive en Postgres y sobrevive a un reinicio. Se repetirá con el **agente real en el plan Standard** tras el despliegue final desde `main`, y se actualizarán horas y capturas._
 
 ## 5. Conclusiones de arquitectura y coste
 
@@ -200,7 +200,7 @@ Lo que cambia son las variables, no el código:
    igual que el historial. Lo señaló Davide en la revisión de la PR #7.
 
 2. **El auto-deploy no se pudo conectar desde la cuenta de Render del equipo** (Davide). El servicio de Render
-   está en mi cuenta, pero el repo está en la de Alex. Render solo ve los repos de las cuentas donde se instala su
+   está en la cuenta de Davide, pero el repo está en la de Alex. Render solo ve los repos de las cuentas donde se instala su
    app de GitHub, y esa app solo la puede instalar el dueño de la cuenta. Por eso el servicio quedó conectado como
    **repositorio público**: despliega bien, pero no redespliega solo con cada push a `main`.
    **Qué haríamos:** que el dueño del repo autorice la app de Render, o usar un *deploy hook* de Render (una URL
