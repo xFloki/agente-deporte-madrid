@@ -163,6 +163,43 @@ docker run --rm -p 8000:8000 --env-file .env -e DATABASE_URL=postgresql://postgr
 > **Antes de probar en local**, comprueba que en el puerto 8000 solo está el servicio que esperas
 > (`netstat -ano | findstr :8000` en Windows): un uvicorn olvidado en otra terminal puede contestar en su lugar.
 
+## Despliegue en Render
+
+**URL del servicio:** https://agente-deporte-api.onrender.com (`/docs` y `/health` son públicos).
+
+En Render hay dos piezas, en la misma región (Frankfurt):
+
+- **Web Service** `agente-deporte-api`: la imagen del `Dockerfile`, construida a partir de la rama `main`.
+- **PostgreSQL** `agente-deporte-db`: el historial. El servicio se conecta con la *Internal Database URL*.
+
+Variables en el panel del servicio (**Environment**), nunca en el repo:
+
+| Variable | Valor |
+|---|---|
+| `DATABASE_URL` | *Internal Database URL* de la base de Render |
+| `API_KEY` | la clave de la API (la de demo se envía al profesorado por el canal de entrega) |
+| `GOOGLE_API_KEY`, `LLM_MODEL` | clave y modelo de Gemini |
+| `CORS_ORIGINS` | `http://localhost:8501` (el front corre en local) |
+| `ASK_TIMEOUT_SECONDS` | `300` (margen para un turno real del multiagente) |
+| `RATE_LIMIT_PER_MINUTE` | `30` |
+
+`PORT` no se pone: lo inyecta Render.
+
+**Cómo se despliega:** cada push a `main` (es decir, cada merge de `develop` a `main`) pasa los tests en GitHub Actions y,
+si están en verde, el job `deploy` llama al *deploy hook* de Render (secreto `RENDER_DEPLOY_HOOK` en GitHub), que
+construye y arranca la imagen nueva. También se puede lanzar a mano con **Manual Deploy** en el panel.
+**Rollback:** en Render, **Deploys → un deploy anterior → Rollback**.
+
+**Memoria:** con el agente real, el servicio necesita el plan **Standard (2 GB)**. En el gratuito (512 MB) el
+contenedor muere al cargar el modelo de embeddings del RAG (issue #4).
+
+**Front contra Render:** en el `.env` del front, `API_BASE_URL=https://agente-deporte-api.onrender.com` y la misma
+`API_KEY` que tiene el servicio. Después, `streamlit run front/streamlit_app.py`. Si el servicio estaba dormido, el
+primer `/health` puede tardar cerca de un minuto.
+
+**Prueba de vida:** un turno en el front, **Manual Deploy → Restart service** en Render, y **Recargar historial**: el turno
+sigue ahí porque está en Postgres. Detalle y capturas en `entregables/informe_decisiones.md` (apartado 4).
+
 ---
 
 # Del PB2: el agente
