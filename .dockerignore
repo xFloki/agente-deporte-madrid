@@ -1,0 +1,26 @@
+# Lo que NO entra en la imagen Docker (el Dockerfile hace COPY . . con todo lo demás)
+
+# Secretos: entran al ejecutar (--env-file en local, panel de Render), nunca dentro de la imagen
+.env
+.env.*
+!.env.example
+
+# Entornos y cachés locales
+.venv/
+venv/
+**/__pycache__/
+**/*.pyc
+.pytest_cache/
+
+# Git y CI
+.git/
+.github/
+
+# El índice del RAG se construye dentro de la imagen (docker build): no se copia el local
+rag/chroma/
+rag/output/
+
+# Lo que el servicio no necesita para funcionar
+salidas/
+tests/
+entregables/

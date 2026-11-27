@@ -144,6 +144,25 @@ Qué enseña:
 python -m pytest tests/test_front.py -v  # con una API falsa: sin red y sin API arrancada
 ```
 
+## Imagen Docker
+
+La API, el agente y el RAG viajan en **una sola imagen** (`Dockerfile`), la misma en local y en Render.
+
+```bash
+docker build -t agente-deporte .
+docker run --rm -p 8000:8000 --env-file .env -e DATABASE_URL=postgresql://postgres:postgres@host.docker.internal:5432/deporte agente-deporte
+```
+
+- **Secretos al arrancar, no en la imagen:** `--env-file .env` en local y el panel de Render en la nube. `.dockerignore` deja fuera `.env`, `.venv/`, `.git/` y el índice local.
+- **`host.docker.internal`:** dentro del contenedor, `localhost` es el propio contenedor; así se llega al Postgres del PC (`pg-deporte`).
+- **El índice del RAG se construye en el `docker build`** (`python -m rag --index`, unos 3 minutos; no necesita claves), en una capa propia que solo se rehace si cambia `rag/`.
+- **Puerto:** escucha en `0.0.0.0:${PORT:-8000}`; Render inyecta `PORT`. Sin log de accesos de uvicorn, porque la `api_key` va en la URL.
+- **Tiempo de build:** el primero tarda unos 10 minutos (torch, dependencias e índice); después, cambiar código solo rehace la última capa (segundos). Si se actualiza la imagen base `python:3.12-slim`, se reconstruye todo.
+- **Memoria:** con un `/ask` real (agente + RAG cargado) el contenedor usa unos 880 MiB. Por eso el servicio va en el plan Standard de Render (2 GB): con 512 MB muere al cargar el modelo de embeddings (ver issue #4).
+
+> **Antes de probar en local**, comprueba que en el puerto 8000 solo está el servicio que esperas
+> (`netstat -ano | findstr :8000` en Windows): un uvicorn olvidado en otra terminal puede contestar en su lugar.
+
 ---
 
 # Del PB2: el agente
