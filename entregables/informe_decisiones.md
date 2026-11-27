@@ -3,7 +3,7 @@
 El agente del PB2 (multiagente LangGraph + RAG del PB1 sobre el deporte municipal de Madrid), publicado como servicio:
 API FastAPI con Swagger, historial en PostgreSQL, una imagen Docker desplegada en Render y un front Streamlit que habla con la URL pública.
 
-**URL del servicio:** _pendiente_
+**URL del servicio:** https://agente-deporte-api.onrender.com (`/docs` y `/health` públicos; la API key de demo va por el canal de entrega)
 
 | Apartado | Responsable |
 |---|---|
@@ -19,9 +19,26 @@ API FastAPI con Swagger, historial en PostgreSQL, una imagen Docker desplegada e
 
 ## 1. Sistema desplegado
 
-<!-- Dibujo del sistema: front local, Web Service en Render (API + agente + RAG), PostgreSQL de Render y Gemini. -->
+```mermaid
+flowchart TD
+    U["Persona<br/>(navegador)"] --> F["Front Streamlit<br/>front/streamlit_app.py<br/><i>en local</i>"]
+    F -- "HTTPS · api_key en la query<br/>API_BASE_URL = URL de Render" --> W
 
-_Pendiente._
+    subgraph R["Render · Frankfurt"]
+        W["Web Service (Docker)<br/>FastAPI + agente del PB2 + RAG<br/>agente-deporte-api.onrender.com"]
+        P[("PostgreSQL managed<br/>historial: Conversation + Message")]
+        W -- "Internal Database URL" --> P
+    end
+
+    W -- "GOOGLE_API_KEY" --> G["Gemini<br/>(supervisor, especialistas,<br/>sintetizar, imagen)"]
+    W -- "HTTP" --> M["datos.madrid.es<br/>(agenda en vivo)"]
+```
+
+- **Front (local):** solo habla HTTP con la API, a través de `front/api_cliente.py`. No importa el grafo, ni `config.py`, ni nada de `src/` (hay un test que lo comprueba).
+- **Web Service (Render):** una sola imagen Docker con la API, el agente, las tools y el índice del RAG ya construido.
+- **PostgreSQL (Render):** guarda el historial de los turnos cerrados. Vive fuera del contenedor, así que sobrevive a reinicios y redeploys. El servicio y la base están en la misma región, y se hablan por la *Internal Database URL*, sin salir a internet.
+- **Gemini y datos.madrid.es:** los únicos servicios externos. La clave de Gemini está en el panel de Render.
+- **Lo que no sale del proceso:** el checkpoint del grafo (`MemorySaver`). Un reinicio pierde un HITL a medias, pero no el historial (apartado 3).
 
 ## 2. Contrato: qué es público y qué lleva `api_key`
 
@@ -63,9 +80,24 @@ Sin límite de espera, con Postgres caído, la conexión se quedó colgada **3 m
 
 ## 4. Prueba de vida
 
-<!-- Turno en la URL pública, redeploy, y GET …/messages sigue devolviéndolo. Pegar la URL que se envía al profesorado. -->
+**URL enviada al profesorado:** https://agente-deporte-api.onrender.com
 
-_Pendiente._
+Hecha el 23/11/2026 desde el front, con `API_BASE_URL` apuntando a la URL de Render:
+
+| Hora | Paso | Evidencia |
+|---|---|---|
+| 17:08 | Pregunta y **Aprobar** en el front (`thread_id = cb3d1306`). El turno queda cerrado y guardado | [`pb3_01_turno_aprobado.png`](capturas/pb3_01_turno_aprobado.png) |
+| 17:11 | **Reinicio del servicio** en Render («Service restarted by you») | [`pb3_02_render_events_reinicio.png`](capturas/pb3_02_render_events_reinicio.png) |
+| 17:14 | Front recargado desde cero (`ultimo: null`), **Abrir una conversación** `cb3d1306`: el turno sigue ahí, leído de Postgres | [`pb3_03_historial_tras_reinicio.png`](capturas/pb3_03_historial_tras_reinicio.png) |
+
+Además, en la URL pública `/health` devuelve `{"status":"ok","storage":"postgres"}` ([`pb3_04_health_render.png`](capturas/pb3_04_health_render.png)) y `/docs` abre sin clave ([`pb3_05_docs_render.png`](capturas/pb3_05_docs_render.png)). El servicio y la base, en el mismo proyecto de Render: [`pb3_06_render_proyecto.png`](capturas/pb3_06_render_proyecto.png).
+
+Cómo repetirla:
+1. Hacer un turno en el front y anotar el `thread_id`.
+2. En Render, **Manual Deploy → Restart service** (o un redeploy).
+3. En el front, **Recargar historial**, o, tras recargar la página, **Abrir una conversación** con ese `thread_id`. Sin front vale lo mismo con `GET /threads/{thread_id}/messages?api_key=…` en Swagger.
+
+_Esta prueba se hizo con la API mínima del punto de partida (respuestas «(ejemplo)», sin cargar el RAG) y el servicio en el **plan gratuito**, que es lo que se ve en las capturas. Lo que demuestra es que el historial vive en Postgres y sobrevive a un reinicio. Se repetirá con el **agente real en el plan Standard** tras el despliegue final desde `main`, y se actualizarán horas y capturas._
 
 ## 5. Conclusiones de arquitectura y coste
 
@@ -143,11 +175,20 @@ borrar el servicio; cambiar el plan del espacio de trabajo no basta.
 
 ### Cómo desplegamos y qué es un rollback
 
-_Pendiente._
+- **Cómo desplegamos:** Render construye la imagen con nuestro `Dockerfile` y la arranca con las variables del panel. Para la entrega, el servicio despliega la rama `main`: se llega a ella solo desde `develop` y con PR, así que lo que está en producción siempre ha pasado los tests y una revisión. El objetivo es que cada merge a `main` redespliegue solo (ver el fallo 2); mientras tanto, se lanza con **Manual Deploy**.
+- **Rollback:** en Render, **Deploys → un deploy anterior → Rollback**. Vuelve a la imagen anterior en un par de minutos, sin tocar Git. Después se corrige en una rama y se vuelve a mergear a `main` (o se hace `git revert` en `main`). El historial no se toca, porque está en Postgres y no en la imagen.
 
 ### Qué separa desarrollo de producción
 
-_Pendiente._
+Lo que cambia son las variables, no el código:
+
+| | Desarrollo (local) | Producción (Render) |
+|---|---|---|
+| Dónde están las variables | `.env` | panel del servicio |
+| API | `uvicorn app:app --reload` en `127.0.0.1:8000` | la imagen Docker, en el `PORT` que inyecta Render |
+| Base de datos | Postgres en Docker local o la *External Database URL* de Render | la *Internal Database URL* (misma región) |
+| `API_KEY` | una clave de pruebas | otra distinta, que solo se comparte con el profesorado |
+| Front | `API_BASE_URL=http://127.0.0.1:8000` | `API_BASE_URL=https://agente-deporte-api.onrender.com` |
 
 ## 7. Tres fallos y qué haríamos después
 
@@ -158,6 +199,12 @@ _Pendiente._
    **Qué haríamos:** guardar el plan aprobado en Postgres, en una tabla `Plan` (`thread_id`, pasos y fecha),
    igual que el historial. Lo señaló Davide en la revisión de la PR #7.
 
-2. _Pendiente._
+2. **El auto-deploy no se pudo conectar desde la cuenta de Render del equipo** (Davide). El servicio de Render
+   está en la cuenta de Davide, pero el repo está en la de Alex. Render solo ve los repos de las cuentas donde se instala su
+   app de GitHub, y esa app solo la puede instalar el dueño de la cuenta. Por eso el servicio quedó conectado como
+   **repositorio público**: despliega bien, pero no redespliega solo con cada push a `main`.
+   **Qué haríamos:** que el dueño del repo autorice la app de Render, o usar un *deploy hook* de Render (una URL
+   secreta) llamado desde GitHub Actions en cada push a `main`, después de que pasen los tests. Y, desde el primer
+   día, tener el repo y el servicio de despliegue en la misma cuenta u organización.
 
 3. _Pendiente._
