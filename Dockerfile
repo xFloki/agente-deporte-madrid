@@ -29,9 +29,6 @@ ENV HF_HUB_OFFLINE=1
 # 4) El resto del código (API, agente, tools, imagen demo). Cambiarlo ya no reconstruye el índice.
 COPY . .
 
-# A partir de aquí el modelo ya está en la imagen: que no intente descargarlo al arrancar
-ENV HF_HUB_OFFLINE=1
-
 EXPOSE 8000
 
 # sh -c para que se expanda ${PORT} (Render lo inyecta; en local, 8000) y exec para que uvicorn
