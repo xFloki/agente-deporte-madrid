@@ -1,18 +1,158 @@
-# Agente Deporte municipal de Madrid — Project Break 2
+# Agente Deporte municipal de Madrid — Project Break 3 (MLOps)
 
-Agente multiagente con **LangGraph** que amplía el RAG del Project Break 1
-(instalaciones, tarifas y normas del deporte municipal de Madrid).
+El agente multiagente del **PB2** (LangGraph + RAG del PB1), publicado como servicio:
+**API FastAPI** con Swagger, historial en **PostgreSQL**, imagen **Docker**, despliegue en **Render**
+y un **front Streamlit** que solo habla HTTP con la URL pública.
 
 Equipo 04 — María Muriel · Davide Campi · Alejandro Dietta
 
 Proyecto de uso educativo (bootcamp de AI Engineering de The Bridge). Usa datos públicos del Ayuntamiento de
 Madrid y no incluye ninguna clave: cada persona pone la suya en `.env`.
 
+```text
+Front Streamlit (en local)
+        │  HTTPS   API_BASE_URL = URL de Render
+        ▼
+FastAPI  +  agente PB2  +  RAG          ← un solo contenedor en Render
+        │  /health   /docs   /ask   /approve   /threads/{id}/messages
+        │  DATABASE_URL
+        ▼
+PostgreSQL managed (Render)
+```
+
+## Contrato HTTP
+
+Escrito antes del código (SDD). Los schemas están en [`schemas.py`](schemas.py). Cambiar el contrato
+se acuerda con el equipo y va en una PR propia.
+
+| Método | Ruta | `api_key` (query) | Qué hace |
+|---|---|---|---|
+| GET | `/health` | No | Pulso: `{"status": "ok", "storage": "postgres"}` |
+| GET | `/docs` | No | Swagger con los schemas (`/` redirige aquí) |
+| POST | `/ask` | Sí | `AskIn{pregunta, thread_id, auto_aprobar=true}` → `AskOut` |
+| POST | `/approve` | Sí | `ApproveIn{thread_id, aprobado}` → `AskOut` |
+| GET | `/threads/{thread_id}/messages` | Sí | `list[MessageOut{role, content, created_at}]`, en orden, desde Postgres |
+
+`AskOut{respuesta, thread_id, done, pendiente_hitl, plan, error}`. `plan` es la lista de viñetas que el front
+enseña antes de Aprobar / Rechazar.
+
+- **`auto_aprobar=true`:** si el grafo pide aprobación, la API aprueba sola y el turno queda cerrado (cómodo en Swagger).
+- **`auto_aprobar=false`:** vuelve `pendiente_hitl=true` y se decide con `POST /approve`.
+- **Historial:** se guardan los turnos cerrados (`user` + `assistant`). Un turno está cerrado cuando no queda
+  pendiente de aprobación: aprobado, rechazado o sin plan. No hay que confundirlo con `done`, que solo es `true`
+  al aprobar. Si el turno queda pendiente, se guarda cuando se decide con `POST /approve`. El checkpoint del grafo
+  sigue en `MemorySaver`: un reinicio pierde un HITL a medias, pero no el historial.
+
+| Código | Cuándo |
+|---|---|
+| 401 | Falta `api_key` o es incorrecta |
+| 422 | El body no es válido |
+| 429 | Más de `RATE_LIMIT_PER_MINUTE` peticiones por minuto |
+| 503 | El servicio no tiene `API_KEY` configurada |
+| 504 | El turno supera `ASK_TIMEOUT_SECONDS` |
+| 404 / 400 | En `/approve`: no hay sesión para ese hilo / no hay plan pendiente |
+
+## Estado del punto de partida
+
+La API ya arranca con todas las rutas, pero **todavía devuelve respuestas de ejemplo**, y el historial vive
+en PostgreSQL (ver «Historial en PostgreSQL», más abajo). Cada bloque completa su parte:
+
+| Bloque | Qué | Ramas sugeridas |
+|---|---|---|
+| A · API y seguridad | `/ask` y `/approve` llaman a `procesar_turno` / `aprobar_plan`; 401/503, 429, 504, CORS y log por petición | `feature/api-ask`, `feature/seguridad` |
+| B · Datos y contenedor | `src/models.py` + `src/db.py` con PostgreSQL (SQLModel), `Dockerfile`, `.dockerignore` y prueba de memoria del RAG | `feature/postgres-historial`, `feature/dockerfile` |
+| C · Front y despliegue | `front/streamlit_app.py` como cliente HTTP y despliegue en Render | `feature/front-http`, `feature/render` |
+
+Puntos de contacto entre bloques (solo estos): `schemas.py`, las firmas de `src/db.py` y las variables de
+`.env.example`.
+
+```bash
+uvicorn app:app --reload                # http://127.0.0.1:8000/docs
+python -m pytest tests/test_api_contrato.py -v
+```
+
+El Streamlit del PB2 sigue en `app_streamlit_pb2.py` como referencia para el front HTTP (bloque C).
+
+## Historial en PostgreSQL
+
+Cada turno cerrado se guarda en PostgreSQL con SQLModel (`src/models.py` y `src/db.py`). Las tablas se crean
+solas al arrancar la API.
+
+| Tabla | Columnas | Contenido |
+|---|---|---|
+| `conversation` | `id` (= `thread_id`), `created_at` | Una fila por conversación |
+| `message` | `id` (autoincremental), `thread_id` → `conversation.id`, `role`, `content`, `created_at` (UTC) | Dos filas por turno: `user` y `assistant` |
+
+- El historial se ordena por `id`: el mensaje del usuario y la respuesta se guardan a la vez y pueden tener el mismo `created_at`.
+- Cada turno se guarda en **una sola transacción**: o se guardan los dos mensajes, o ninguno.
+- Si Postgres no responde, la conexión falla a los 10 s (`connect_timeout`) con un error claro, en vez de quedarse colgada.
+- El estado del grafo (un plan pendiente de aprobar) sigue en memoria (`MemorySaver`): se pierde al reiniciar; el historial no.
+
+### Postgres en local con Docker
+
+Requisito: Docker Desktop abierto (*Engine running*).
+
+```bash
+# La primera vez: crea el contenedor (con un volumen, los datos sobreviven aunque se borre) y la base «deporte»
+docker run --name pg-deporte -e POSTGRES_PASSWORD=postgres -p 5432:5432 -v pg-deporte-data:/var/lib/postgresql/data -d postgres:16
+docker exec -it pg-deporte createdb -U postgres deporte
+
+# Las siguientes veces
+docker start pg-deporte
+```
+
+El `DATABASE_URL` de `.env.example` ya apunta a este contenedor
+(`postgresql://postgres:postgres@localhost:5432/deporte`). `config.py` lo convierte a `postgresql+psycopg://`.
+
+Comprobar:
+
+```bash
+uvicorn app:app --reload        # GET /health → {"status": "ok", "storage": "postgres"}
+docker exec -it pg-deporte psql -U postgres -d deporte -c "SELECT id, thread_id, role FROM message ORDER BY id;"
+python -m pytest -q             # tests/test_db_postgres.py se salta si Postgres no responde en 2 s
+```
+
+> **Windows:** si tras instalar Docker Desktop la terminal no reconoce `docker`, cierra sesión y vuelve a entrar
+> (el instalador por usuario actualiza el `PATH`, pero los programas abiertos no lo ven).
+
+## Front (Streamlit, cliente HTTP)
+
+`front/streamlit_app.py` solo habla HTTP con la API (a través de `front/api_cliente.py`): no importa el grafo,
+ni `config.py`, ni nada de `src/`. Lee dos variables del `.env`:
+
+- `API_BASE_URL`: la URL de la API (`http://127.0.0.1:8000` en local; en la demo final, la URL de Render).
+- `API_KEY`: la misma clave que tiene configurada la API.
+
+```bash
+uvicorn app:app --reload                 # terminal 1: la API
+streamlit run front/streamlit_app.py     # terminal 2: el front, en http://localhost:8501
+```
+
+Qué enseña:
+
+- **Servicio:** el estado de `GET /health` (API activa y dónde vive el historial), con un botón para comprobarlo otra vez.
+- **Chat:** cada pregunta es un `POST /ask` con `auto_aprobar=false`.
+- **HITL:** si hay plan, se ve en la barra lateral con **Aprobar** y **Rechazar** (`POST /approve`), y el chat se bloquea hasta decidir.
+- **Historial:** se pide a la API con `GET /threads/{thread_id}/messages` después de cada turno; no es una lista en memoria del front.
+- **`thread_id`** visible, y **Nueva conversación** crea otro.
+- **Recargar historial** vuelve a pedirlo a la API, y **Abrir una conversación** retoma un `thread_id` guardado
+  (por ejemplo después de recargar la página). Así se hace la prueba de vida desde el front: un turno,
+  redeploy o reinicio de la API, y **Recargar historial** enseña que el turno sigue en Postgres.
+- **Errores** de la API (401, 429, 504, servicio dormido…) en un mensaje claro, sin enseñar la clave.
+
+```bash
+python -m pytest tests/test_front.py -v  # con una API falsa: sin red y sin API arrancada
+```
+
+---
+
+# Del PB2: el agente
+
 ## Instalación
 
 ```bash
-git clone https://github.com/davide96a/proyect-break-2-equipo-04.git
-cd proyect-break-2-equipo-04
+git clone https://github.com/xFloki/agente-deporte-madrid.git
+cd agente-deporte-madrid
 python3.12 -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 python -m pip install -r requirements.txt
@@ -154,11 +294,11 @@ python -m pytest -q   # tests del grafo y de las tools: sin red ni clave
 ## Agente en el navegador (Streamlit)
 
 ```bash
-streamlit run app.py                   # abre http://localhost:8501
-USE_MOCKS=1 streamlit run app.py       # tools falsas: sin índice del RAG ni red
+streamlit run app_streamlit_pb2.py                   # abre http://localhost:8501
+USE_MOCKS=1 streamlit run app_streamlit_pb2.py       # tools falsas: sin índice del RAG ni red
 ```
 
-`app.py` es solo cliente de `src/agent.py` (mismas funciones que la CLI: `procesar_turno` y `aprobar_plan`):
+`app_streamlit_pb2.py` es solo cliente de `src/agent.py` (mismas funciones que la CLI: `procesar_turno` y `aprobar_plan`):
 
 - **Chat:** cada mensaje es un turno del grafo en el mismo `thread_id` (se ve en la barra lateral).
 - **Barra lateral:** el `thread_id`, los límites del agente (`MAX_ITER`, `MAX_STEPS`, `MAX_TURNS`, solo informativos:
@@ -221,7 +361,10 @@ GitHub Actions los ejecuta en cada PR a `develop` y `main` y en cada push a cual
 ## Estructura
 
 ```
-├── main.py / app.py      # CLI y Streamlit
+├── app.py                # API FastAPI (PB3)
+├── schemas.py            # contrato HTTP (PB3)
+├── main.py               # CLI del PB2
+├── app_streamlit_pb2.py  # Streamlit del PB2 (referencia para el front)
 ├── config.py             # límites, modelo y rutas
 ├── src/                  # estado, grafo, agente, LLM
 │   └── tools/            # allowlist + tools
