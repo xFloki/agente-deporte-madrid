@@ -142,7 +142,7 @@ _Pendiente._
 | Pieza | Plan | Coste |
 |---|---|---|
 | Web Service (API + agente + RAG) | Standard: 1 CPU, 2 GB | 25 $/mes, prorrateado por segundos |
-| PostgreSQL | Gratuito: 256 MB | 0 $ (caduca a los 30 días; suficiente para la entrega y la presentación) |
+| PostgreSQL | Gratuito: 256 MB de RAM y 1 GB de almacenamiento | 0 $ (caduca a los 30 días, más 14 de gracia; suficiente para la entrega y la presentación) |
 
 Desde el despliegue hasta la presentación son unos 10 días: **del orden de 8–9 $**, repartidos entre los tres.
 Después de la presentación el servicio vuelve al plan gratuito. Para dejar de pagar hay que bajar la máquina o
@@ -156,7 +156,7 @@ borrar el servicio; cambiar el plan del espacio de trabajo no basta.
 
 <!-- Un test que no llama al LLM y un docker build. -->
 
-1. **Tests que no llaman al LLM:** `python -m pytest -q` (82 tests). El agente y la API se sustituyen por
+1. **Tests que no llaman al LLM:** `python -m pytest -q`. El agente y la API se sustituyen por
    versiones falsas, así que no hace falta clave ni red. Los tests contra Postgres real se saltan si no hay
    Postgres. GitHub Actions ya los ejecuta en cada push y en cada PR (`.github/workflows/tests.yml`), y una
    PR no se mergea sin ellos en verde.
