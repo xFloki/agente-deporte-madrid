@@ -1,5 +1,6 @@
 # Pasa todos los tests en cada PR a develop y main, y en cada push a cualquier rama.
 # Los tests no usan red ni clave de Gemini (tools falsas, LLM falso y monkeypatch), así que no hace falta ningún secreto.
+# En cada push a main, si los tests pasan, avisa a Render para que redespliegue (deploy hook).
 name: Tests
 
 on:
@@ -34,3 +35,23 @@ jobs:
 
       - name: Ejecutar los tests
         run: python -m pytest -q
+
+  deploy:
+    # Solo en push a main y solo si los tests han pasado: así a producción nunca llega un main roto.
+    # RENDER_DEPLOY_HOOK es la URL secreta de Render (servicio → Settings → Deploy Hook), guardada en
+    # GitHub → Settings → Secrets and variables → Actions. Nunca va en el repo ni en los logs.
+    needs: pytest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Redesplegar en Render
+        env:
+          RENDER_DEPLOY_HOOK: ${{ secrets.RENDER_DEPLOY_HOOK }}
+        run: |
+          if [ -z "$RENDER_DEPLOY_HOOK" ]; then
+            echo "Falta el secreto RENDER_DEPLOY_HOOK: no se redespliega."
+            exit 1
+          fi
+          curl -fsS -X POST "$RENDER_DEPLOY_HOOK" > /dev/null
+          echo "Render avisado: el redespliegue de main está en marcha."
